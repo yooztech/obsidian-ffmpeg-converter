@@ -2,33 +2,33 @@ import { App, TFile } from "obsidian";
 import File from "src/files/File";
 import { Type } from "src/formats";
 
-export default class Loader
-{
+export default class Loader {
     protected app: App;
     protected extensions: string[];
     protected filterCallback: ((arg: TFile) => boolean | Promise<boolean>) | undefined;
     public type: Type;
 
-    constructor(app: App, type: Type, extensions: string[], filterCallback?: (arg: TFile) => boolean | Promise<boolean>)
-    {
+    constructor(app: App, type: Type, extensions: string[], filterCallback?: (arg: TFile) => boolean | Promise<boolean>) {
         this.app = app;
         this.type = type;
         this.extensions = extensions;
         this.filterCallback = filterCallback;
     }
 
-    async getFiles(): Promise<File[]>
-    {
+    async getFiles(): Promise<File[]> {
         const files = this.app.vault.getFiles();
         const result: File[] = [];
 
-        for (const f of files)
-        {
+        for (const f of files) {
+            // Skip temporary files created during conversion
+            if (f.basename.includes("_tmp")) {
+                continue;
+            }
+
             const extensionIncluded = this.extensions.includes(f.extension);
             const filterCallbackResult = this.filterCallback ? await this.filterCallback(f) : true;
 
-            if (extensionIncluded && filterCallbackResult)
-            {
+            if (extensionIncluded && filterCallbackResult) {
                 result.push(new File(f, this.type));
             }
         }

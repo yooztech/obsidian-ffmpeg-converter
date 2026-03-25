@@ -1,10 +1,10 @@
 {
-    "id": "ffmpeg-converter",
-    "name": "FFmpeg Converter",
+    "id": "ffmpeg-converter-fix",
+    "name": "FFmpeg Converter Fix",
     "version": "1.1.0",
     "minAppVersion": "0.15.0",
     "description": "Convert most used file formats into another format using FFmpeg and FFprobe to optimize your vault space",
-    "author": "MrAnyx",
-    "authorUrl": "https://github.com/MrAnyx",
+    "author": "yooztech",
+    "authorUrl": "https://github.com/yooztech",
     "isDesktopOnly": true
 }

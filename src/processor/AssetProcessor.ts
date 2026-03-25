@@ -10,10 +10,8 @@ import fs from "fs";
 import Processor from "./Processor";
 import { generateUniqueId } from "src/utils/uniqueId";
 
-export default class AssetProcessor extends Processor
-{
-    constructor(app: App, settings: SettingType)
-    {
+export default class AssetProcessor extends Processor {
+    constructor(app: App, settings: SettingType) {
         super(app, settings);
 
         this.loaders = [
@@ -44,12 +42,10 @@ export default class AssetProcessor extends Processor
         ];
     }
 
-    private getNewFileExtension(file: File)
-    {
+    private getNewFileExtension(file: File) {
         const fileType = file.type;
 
-        switch (fileType)
-        {
+        switch (fileType) {
             case Type.image:
                 return this.settings.outputImageFormat;
             case Type.video:
@@ -61,87 +57,75 @@ export default class AssetProcessor extends Processor
         }
     }
 
-    private async generateWorkFiles(file: File)
-    {
+    private async generateWorkFiles(file: File) {
         const uniqueId = generateUniqueId(this.settings.uniqueIdLength);
 
+        // Create tmp of original file with unique suffix
         const tmpFile = file.clone({
-            name: `${file.name}_${file.extension}_${uniqueId}`,
-            extension: "tmp",
+            name: `${file.name}_${uniqueId}_tmp`,
         });
 
-        const newFile = file.clone({
+        // Create a new target file with the original name (for output)
+        const targetFile = file.clone({
+            name: file.name,
             extension: this.getNewFileExtension(file),
-
-            // Update the name to make it unique if overwrite is disabled
-            ...(!this.settings.overwrite ? { name: `${file.name}_${uniqueId}` } : {})
         });
 
         return {
-            newFile,
+            targetFile,
             tmpFile
         };
     }
 
-    async process()
-    {
+    async process() {
         let progressNotice: Notice | undefined;
 
-        for (const loader of this.loaders)
-        {
+        for (const loader of this.loaders) {
             const files = await loader.getFiles();
 
             new Notice(`Found ${files.length} files to convert of type ${loader.type}`);
 
             const converter = ConverterFactory.createConverter(loader.type, this.settings);
 
-            if (files.length === 0)
-            {
+            if (files.length === 0) {
                 continue;
             }
 
             let fileIndex = 1;
 
             // Use of traditional for of to prevent file conflict in async programming
-            for (const originalFile of files)
-            {
-                if (progressNotice)
-                {
+            for (const originalFile of files) {
+                if (progressNotice) {
                     progressNotice.setMessage(`Processing file ${fileIndex}/${files.length} (${originalFile.name})`);
                 }
-                else
-                {
+                else {
                     progressNotice = new Notice(`Processing file ${fileIndex}/${files.length} (${originalFile.name})`, 0);
                 }
 
-                const { newFile, tmpFile } = await this.generateWorkFiles(originalFile);
+                const { targetFile, tmpFile } = await this.generateWorkFiles(originalFile);
 
-                try
-                {
-                    // Copy original file to temporary file
-                    await this.app.vault.copy(originalFile.file, tmpFile.getVaultPathWithExtension());
+                try {
+                    // Rename original file to tmp (keeps original extension for FFmpeg)
+                    await this.app.fileManager.renameFile(originalFile.file, tmpFile.getVaultPathWithExtension());
 
-                    if (fs.existsSync(newFile.getFullPathWithExtension()))
-                    {
-                        // Rename original file to new file
-                        await this.app.vault.adapter.remove(newFile.getVaultPathWithExtension());
-                    }
+                    // Convert tmp file to target file (overwrites original filename)
+                    await converter.convert(tmpFile, targetFile);
 
-                    await this.app.fileManager.renameFile(originalFile.file, newFile.getVaultPathWithExtension());
-
-                    // Remove original renamed file
-                    await this.app.vault.adapter.remove(newFile.getVaultPathWithExtension());
-
-                    // Convert to new format using FFmpeg
-                    await converter.convert(tmpFile, newFile);
-
-                    // Remove temporary file
+                    // Remove tmp file after successful conversion
                     await this.app.vault.adapter.remove(tmpFile.getVaultPathWithExtension());
 
                     fileIndex++;
                 }
-                catch (e: unknown)
-                {
+                catch (e: unknown) {
+                    // Try to restore tmp on failure
+                    try {
+                        if (await this.app.vault.adapter.exists(tmpFile.getVaultPathWithExtension())) {
+                            await this.app.fileManager.renameFile(tmpFile.file, originalFile.file.path);
+                        }
+                    } catch (restoreError) {
+                        console.error("Failed to restore tmp file:", restoreError);
+                    }
+
                     new Notice(`An error occured when converting ${originalFile.file.path}, please check the developer console for more details (Ctrl+Shift+I for Windows or Linux or Cmd+Shift+I for Mac)`, 5000);
                     console.error(e);
                     break;
