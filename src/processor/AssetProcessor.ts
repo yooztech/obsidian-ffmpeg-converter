@@ -1,4 +1,5 @@
 import { App, Notice } from "obsidian";
+import path from "path";
 import { ConverterFactory } from "src/converter/ConverterFactory";
 import File from "src/files/File";
 import { ImageExtensions, VideoExtensions, AudioExtensions, Type } from "src/formats";
@@ -8,7 +9,6 @@ import VideoLoader from "src/loader/VideoLoader";
 import { SettingType } from "src/setting/SettingType";
 import fs from "fs";
 import Processor from "./Processor";
-import { generateUniqueId } from "src/utils/uniqueId";
 
 export default class AssetProcessor extends Processor {
     constructor(app: App, settings: SettingType) {
@@ -58,23 +58,60 @@ export default class AssetProcessor extends Processor {
     }
 
     private async generateWorkFiles(file: File) {
-        const uniqueId = generateUniqueId(this.settings.uniqueIdLength);
-
-        // Create tmp of original file with unique suffix
-        const tmpFile = file.clone({
-            name: `${file.name}_${uniqueId}_tmp`,
-        });
-
-        // Create a new target file with the original name (for output)
         const targetFile = file.clone({
-            name: file.name,
+            name: `${file.name}_compressed`,
             extension: this.getNewFileExtension(file),
         });
 
-        return {
-            targetFile,
-            tmpFile
-        };
+        return { targetFile };
+    }
+
+    private async updateMarkdownReferences(originalPath: string, newPath: string) {
+        console.log("Updating markdown references:", originalPath, "->", newPath);
+
+        const markdownFiles = this.app.vault.getMarkdownFiles();
+        const originalName = path.basename(originalPath);
+        const newName = path.basename(newPath);
+
+        console.log("Original name:", originalName, "New name:", newName);
+
+        if (!originalName || !newName) {
+            console.log("Skipping: empty names");
+            return;
+        }
+
+        const lowerOriginal = originalName.toLowerCase();
+
+        for (const mdFile of markdownFiles) {
+            const content = await this.app.vault.read(mdFile);
+            const lowerContent = content.toLowerCase();
+
+            let newContent = "";
+            let lastIndex = 0;
+            let found = false;
+
+            // Find all occurrences case-insensitively
+            let index = lowerContent.indexOf(lowerOriginal);
+            while (index !== -1) {
+                found = true;
+                // Copy content before match
+                newContent += content.substring(lastIndex, index);
+                // Add replacement
+                newContent += newName;
+                // Move past this match
+                lastIndex = index + originalName.length;
+                // Find next match
+                index = lowerContent.indexOf(lowerOriginal, lastIndex);
+            }
+
+            // Add remaining content
+            newContent += content.substring(lastIndex);
+
+            if (found) {
+                await this.app.vault.modify(mdFile, newContent);
+                console.log(`Updated references in ${mdFile.path}: ${originalName} -> ${newName}`);
+            }
+        }
     }
 
     async process() {
@@ -93,7 +130,6 @@ export default class AssetProcessor extends Processor {
 
             let fileIndex = 1;
 
-            // Use of traditional for of to prevent file conflict in async programming
             for (const originalFile of files) {
                 if (progressNotice) {
                     progressNotice.setMessage(`Processing file ${fileIndex}/${files.length} (${originalFile.name})`);
@@ -102,28 +138,37 @@ export default class AssetProcessor extends Processor {
                     progressNotice = new Notice(`Processing file ${fileIndex}/${files.length} (${originalFile.name})`, 0);
                 }
 
-                const { targetFile, tmpFile } = await this.generateWorkFiles(originalFile);
+                const { targetFile } = await this.generateWorkFiles(originalFile);
+
+                const originalPath = originalFile.getVaultPathWithExtension();
+                const targetPath = targetFile.getVaultPathWithExtension();
 
                 try {
-                    // Rename original file to tmp (keeps original extension for FFmpeg)
-                    await this.app.fileManager.renameFile(originalFile.file, tmpFile.getVaultPathWithExtension());
+                    if (fs.existsSync(targetFile.getFullPathWithExtension())) {
+                        await this.app.vault.adapter.remove(targetFile.getVaultPathWithExtension());
+                    }
 
-                    // Convert tmp file to target file (overwrites original filename)
-                    await converter.convert(tmpFile, targetFile);
+                    await converter.convert(originalFile, targetFile);
 
-                    // Remove tmp file after successful conversion
-                    await this.app.vault.adapter.remove(tmpFile.getVaultPathWithExtension());
+                    if (!fs.existsSync(targetFile.getFullPathWithExtension())
+                        || fs.statSync(targetFile.getFullPathWithExtension()).size === 0) {
+                        throw new Error("Output file is empty or was not created");
+                    }
+
+                    await this.updateMarkdownReferences(originalPath, targetPath);
+
+                    await this.app.vault.adapter.remove(originalFile.file.path);
 
                     fileIndex++;
                 }
                 catch (e: unknown) {
-                    // Try to restore tmp on failure
                     try {
-                        if (await this.app.vault.adapter.exists(tmpFile.getVaultPathWithExtension())) {
-                            await this.app.fileManager.renameFile(tmpFile.file, originalFile.file.path);
+                        if (fs.existsSync(targetFile.getFullPathWithExtension())) {
+                            await this.app.vault.adapter.remove(targetFile.getVaultPathWithExtension());
                         }
-                    } catch (restoreError) {
-                        console.error("Failed to restore tmp file:", restoreError);
+                    }
+                    catch (cleanupError) {
+                        console.error("Failed to clean up output file:", cleanupError);
                     }
 
                     new Notice(`An error occured when converting ${originalFile.file.path}, please check the developer console for more details (Ctrl+Shift+I for Windows or Linux or Cmd+Shift+I for Mac)`, 5000);

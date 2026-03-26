@@ -25,6 +25,11 @@ export default class Loader {
                 continue;
             }
 
+            // Skip already compressed files
+            if (f.basename.includes("_compressed")) {
+                continue;
+            }
+
             const extensionIncluded = this.extensions.includes(f.extension);
             const filterCallbackResult = this.filterCallback ? await this.filterCallback(f) : true;
 
